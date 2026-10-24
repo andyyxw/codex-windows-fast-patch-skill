@@ -1934,6 +1934,9 @@ const id = '[A-Za-z_$][\\w$]*';
 const originalPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&(${id})\\.platform!==\`darwin\`\\)return null;`, 'g');
 const patchedPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==null\\|\\|(${id})&&\\((${id})\\.platform!==\`darwin\`&&\\4\\.platform!==\`win32\`\\)\\)return null;`, 'g');
 const originalSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null`, 'g');
+// Desktop 26.1021 ships the Windows branch itself. The gate then also requires
+// the enabled plugin on win32, so it is already open and must not be rewritten.
+const nativeWindowsSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\((${id})\\.platform===\`win32\`\\|\\|\\5\\.platform===\`darwin\`&&\\4\\.paths\\.serviceAppPath!=null\\)`, 'g');
 const modernPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\4\\.platform===\`win32\`\\)`, 'g');
 const legacyPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse&&\\4\\.computerUseNodeRepl\\)`, 'g');
 const unversionedPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse\\)`, 'g');
@@ -1974,14 +1977,20 @@ function countRe(re, source = text) {
 
 const pluginCount = countRe(originalPluginGateRe);
 const surfaceCount = countRe(originalSurfaceGateRe);
+const nativeWindowsSurfaceCount = countRe(nativeWindowsSurfaceGateRe);
 const markerCount = count(marker);
 const patchedPluginCount = countRe(patchedPluginGateRe);
 const patchedSurfaceCounts = patchedSurfaceGateRes.map(re => countRe(re));
 const patchedSurfaceCount = patchedSurfaceCounts.reduce((total, value) => total + value, 0);
+const nativeSurfaceOpen = nativeWindowsSurfaceCount === 1 && surfaceCount === 0 && patchedSurfaceCount === 0;
 if (markerCount || patchedPluginCount || patchedSurfaceCount) {
   if (markerCount === 1 && patchedPluginCount === 1 &&
-      patchedSurfaceCount === 1 && pluginCount === 0 && surfaceCount === 0 &&
+      (patchedSurfaceCount === 1 || nativeSurfaceOpen) && pluginCount === 0 && surfaceCount === 0 &&
       (legacyLayout || modernLayout)) {
+    if (nativeSurfaceOpen) {
+      process.stdout.write('already-patched');
+      process.exit(0);
+    }
     const expectedLayout = modernLayout ? 'modern' : 'legacy';
     const currentGateIndex = patchedSurfaceCounts.findIndex(value => value === 1);
     const expectedGateIndex = modernLayout ? 0 : 1;
@@ -2004,7 +2013,8 @@ if (markerCount || patchedPluginCount || patchedSurfaceCount) {
   process.stderr.write('incomplete or ambiguous CUA surface patch; refusing to modify the asset\n');
   process.exit(2);
 }
-if (pluginCount !== 1 || surfaceCount !== 1) {
+if (pluginCount !== 1 || (surfaceCount !== 1 && !nativeSurfaceOpen) ||
+    (surfaceCount === 1 && nativeWindowsSurfaceCount !== 0)) {
   process.stderr.write(`current CUA surface anchors not found exactly once: plugin=${pluginCount} surface=${surfaceCount}\n`);
   process.exit(2);
 }
@@ -2019,9 +2029,12 @@ const next = text
   .replace(originalPluginGateRe, (match, p, i, a, e) => buildPluginGate(p, i, a, e))
   .replace(originalSurfaceGateRe, (match, result, flag, platform, features, state) =>
     buildSurfaceGate(layout, result, flag, platform, features, state));
+const surfaceVerified = nativeSurfaceOpen
+  ? countRe(nativeWindowsSurfaceGateRe, next) === 1
+  : countRe(expectedSurfaceGateRe, next) === 1;
 
 if (count(marker, next) !== 1 || countRe(patchedPluginGateRe, next) !== 1 ||
-    countRe(expectedSurfaceGateRe, next) !== 1 || countRe(originalPluginGateRe, next) !== 0 ||
+    !surfaceVerified || countRe(originalPluginGateRe, next) !== 0 ||
     countRe(originalSurfaceGateRe, next) !== 0) {
   process.stderr.write('current CUA surface patch verification failed\n');
   process.exit(3);
@@ -2190,6 +2203,18 @@ function Find-PatchTargets {
     foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('ModelPickerPowerSliderImpl')) {
+        $powerSliderTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+    # Desktop 26.1021 removed the harborEnabled gate; the compact slider now
+    # follows the native canRenderPowerPickerSurface decision, which has no
+    # platform branch. Keep the patcher on that file so it reports already-patched.
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-primary-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('ModelPickerPowerSlider') -and $text.Contains('canRenderPowerPickerSurface')) {
         $powerSliderTarget = $candidate
         break
       }
@@ -2763,6 +2788,16 @@ function Invoke-PatchAppAsar {
       foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
         $text = Get-Content -Raw -LiteralPath $candidate
         if ($text.Contains('ModelPickerPowerSliderImpl')) {
+          $powerSliderTarget = $candidate
+          break
+        }
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+      # 同 26.1021 原生 canRenderPowerPickerSurface 形态，见上方完整补丁路径的说明。
+      foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-primary-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if ($text.Contains('ModelPickerPowerSlider') -and $text.Contains('canRenderPowerPickerSurface')) {
           $powerSliderTarget = $candidate
           break
         }
