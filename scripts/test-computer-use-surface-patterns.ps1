@@ -198,6 +198,37 @@ if ($LASTEXITCODE -ne 0) { throw 'modern CUA readiness/platform behavior matrix 
 & $node.Source --check $modern.AssetPath
 if ($LASTEXITCODE -ne 0) { throw 'modern CUA output syntax check failed' }
 
+# Desktop 26.1021 already opens Windows with the installed computer plugin guard.
+$nativeSurfaceGate = 'p=f&&t.computerUse&&u.enabled&&(l.platform===`win32`||l.platform===`darwin`&&u.paths.serviceAppPath!=null)'
+$nativeSource = $modernSource.Replace('p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null', $nativeSurfaceGate)
+foreach ($name in @('native-windows', 'native-windows-repeat')) {
+  $native = Invoke-PatcherFixture -Name $name -Source $nativeSource -ExpectedExitCode 0
+  if ($native.Output -cne 'already-open-native-windows' -or [IO.File]::ReadAllText($native.AssetPath) -cne $nativeSource) {
+    throw 'native Windows support must be recognized without rewriting the surface or legacy skill gate'
+  }
+}
+$nativeBehaviorPath = Join-Path $fixtureRoot 'native-behavior.cjs'
+[IO.File]::WriteAllText($nativeBehaviorPath, @'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), context);
+let cases = 0;
+for (const platform of ['darwin', 'win32', 'linux']) {
+  for (const ready of [false, true]) for (const computerUse of [false, true])
+  for (const enabled of [false, true]) for (const serviceAppPath of [null, '/service']) {
+    const expected = ready && computerUse && enabled &&
+      (platform === 'win32' || platform === 'darwin' && serviceAppPath !== null);
+    assert.equal(context.buildSurface(ready, {platform}, {computerUse}, {enabled, paths:{serviceAppPath}}), expected);
+    cases++;
+  }
+}
+console.log(`NATIVE_WINDOWS_CUA_MATRIX_PASSED cases=${cases}`);
+'@, [Text.UTF8Encoding]::new($false))
+& $node.Source $nativeBehaviorPath $native.AssetPath
+if ($LASTEXITCODE -ne 0) { throw 'native Windows CUA readiness/platform behavior matrix failed' }
+
 # The same readiness predicate shipped with renamed import and export symbols.
 $renamedModernSources = @()
 foreach ($helper in @('n.Wu', 'helpers.$q12')) {
@@ -229,58 +260,6 @@ if ($LASTEXITCODE -ne 0) { throw 'renamed gate output syntax check failed' }
 $renamedGateRepeat = Invoke-PatcherFixture -Name 'modern-renamed-gate-repeat' -Source $renamedGatePatched -ExpectedExitCode 0
 if ($renamedGateRepeat.Output -cne 'already-patched') { throw 'renamed gate patch is not idempotent' }
 Write-Output 'CUA_RENAMED_GATE_LOCALS_PASSED'
-
-# Desktop 26.1021 opens the surface list for Windows itself; only the plugin
-# gate still needs the win32 branch. The native gate must stay byte-identical.
-$nativeSurfaceGate = 'p=f&&t.computerUse&&u.enabled&&(l.platform===`win32`||l.platform===`darwin`&&u.paths.serviceAppPath!=null)'
-$nativeGateSource = $modernSource.Replace(
-  'p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null', $nativeSurfaceGate)
-$nativeGate = Invoke-PatcherFixture -Name 'native-windows-surface' -Source $nativeGateSource -ExpectedExitCode 0
-if ($nativeGate.Output -cne 'patched') { throw 'native Windows surface gate was not patched' }
-$nativeGatePatched = [IO.File]::ReadAllText($nativeGate.AssetPath)
-if (-not $nativeGatePatched.Contains($nativeSurfaceGate)) {
-  throw 'native Windows surface gate was rewritten'
-}
-if (-not $nativeGatePatched.Contains('if(!r.installed||i==null||a&&(e.platform!==`darwin`&&e.platform!==`win32`))return null;')) {
-  throw 'native Windows surface gate did not patch the plugin exposure gate'
-}
-if (-not $nativeGatePatched.Contains('CODEX_CUA_WINDOWS_SURFACE_V1')) {
-  throw 'native Windows surface gate is missing the patch marker'
-}
-& $node.Source --check $nativeGate.AssetPath
-if ($LASTEXITCODE -ne 0) { throw 'native Windows surface gate produced invalid JavaScript' }
-$nativeRepeat = Invoke-PatcherFixture -Name 'native-windows-surface-repeat' -Source $nativeGatePatched -ExpectedExitCode 0
-if ($nativeRepeat.Output -cne 'already-patched' -or
-    [IO.File]::ReadAllText($nativeRepeat.AssetPath) -cne $nativeGatePatched) {
-  throw 'native Windows surface gate is not idempotent'
-}
-$nativeBehaviorPath = Join-Path $fixtureRoot 'native-behavior.cjs'
-[IO.File]::WriteAllText($nativeBehaviorPath, @'
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), context);
-let cases = 0;
-for (const f of [false, true]) for (const computerUse of [false, true])
-for (const enabled of [false, true]) for (const serviceAppPath of [null, '/service']) {
-  assert.equal(context.buildSurface(f, {platform:'win32'}, {computerUse},
-    {enabled, paths:{serviceAppPath}}), f && computerUse && enabled);
-  assert.equal(context.buildSurface(f, {platform:'darwin'}, {computerUse},
-    {enabled, paths:{serviceAppPath}}), f && computerUse && enabled && serviceAppPath !== null);
-  cases += 2;
-}
-for (const platform of ['darwin', 'win32', 'linux']) for (const installed of [false, true])
-for (const skill of [null, 'skill']) for (const computerPlugin of [false, true]) {
-  assert.equal(context.exposePlugin({installed}, skill, computerPlugin, {platform}),
-    !installed || skill === null || computerPlugin && !['darwin','win32'].includes(platform) ? null : true);
-  cases++;
-}
-console.log(`NATIVE_CUA_BEHAVIOR_MATRIX_PASSED cases=${cases}`);
-'@, [Text.UTF8Encoding]::new($false))
-& $node.Source $nativeBehaviorPath $nativeGate.AssetPath
-if ($LASTEXITCODE -ne 0) { throw 'native Windows surface behavior matrix failed' }
-Write-Output 'CUA_NATIVE_WINDOWS_SURFACE_PASSED'
 
 # Migrate complete earlier patches without mistaking their inserted flag for
 # evidence of a legacy host. Legacy hosts must regain their actual feature gate.
@@ -330,6 +309,13 @@ function Assert-RejectedUnchanged {
 }
 
 Assert-RejectedUnchanged 'modern-corrupt-readiness' ($modernPatched.Replace('t.browserUseTinysky', 't.unknownFlag'))
+Assert-RejectedUnchanged 'native-corrupt-readiness' ($nativeSource.Replace('t.browserUseTinysky', 't.unknownFlag'))
+Assert-RejectedUnchanged 'native-duplicate-readiness' ($nativeSource + $modernReadiness)
+Assert-RejectedUnchanged 'native-duplicate-surface' ($nativeSource + $nativeSource)
+Assert-RejectedUnchanged 'native-mixed-marker' ($nativeSource + '/*CODEX_CUA_WINDOWS_SURFACE_V1*/')
+Assert-RejectedUnchanged 'native-missing-enabled' ($nativeSource.Replace('&&u.enabled&&', '&&'))
+Assert-RejectedUnchanged 'native-mismatched-state' ($nativeSource.Replace('u.paths.serviceAppPath', 'v.paths.serviceAppPath'))
+Assert-RejectedUnchanged 'native-mismatched-platform' ($nativeSource.Replace('l.platform===`darwin`', 'other.platform===`darwin`'))
 Assert-RejectedUnchanged 'modern-duplicate-readiness' ($modernPatched + $modernReadiness)
 Assert-RejectedUnchanged 'original-modern-corrupt-readiness' ($modernSource.Replace('t.browserUseTinysky', 't.unknownFlag'))
 Assert-RejectedUnchanged 'original-modern-duplicate-readiness' ($modernSource + $modernReadiness)
@@ -378,6 +364,8 @@ $metadata = '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces computerUseNodeRepl*/'
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'content-based selection failed' }
 [IO.File]::WriteAllText($candidate, $modernSource + '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces*/')
 if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'modern target selection failed' }
+[IO.File]::WriteAllText($candidate, $nativeSource + '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces*/')
+if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'native Windows target selection failed' }
 foreach ($source in $renamedModernSources) {
   [IO.File]::WriteAllText($candidate, $source + '/*CUA_REPL_ENABLED_SURFACES cuaReplSurfaces*/')
   if ((Find-ComputerUseSurfaceTarget $selectionRoot) -cne $candidate) { throw 'renamed modern target selection failed' }
