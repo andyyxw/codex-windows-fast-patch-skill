@@ -3,8 +3,9 @@ const fs = require('node:fs');
 const marker = 'CODEX_NODE_REPL_PROXY_ENV_V1';
 const proxyNames = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
   'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'];
-const original = /let ([A-Za-z_$][\w$]*)=`CODEX_WINDOWS_REGISTERED_CORE`;([A-Za-z_$][\w$]*)=\[\.\.\.new Set\(\[\.\.\.([A-Za-z_$][\w$]*),\1\]\)\];/g;
-const patched = /let ([A-Za-z_$][\w$]*)=`CODEX_WINDOWS_REGISTERED_CORE`;([A-Za-z_$][\w$]*)=\[\.\.\.new Set\(\[\.\.\.([A-Za-z_$][\w$]*),\1,\.\.\.(\[[^\]]+\])\.filter\(e=>process\.env\[e\]\)\]\)\];\/\*CODEX_NODE_REPL_PROXY_ENV_V1\*\//g;
+// Desktop 26.1027 emits the same literal with double quotes.
+const original = /let ([A-Za-z_$][\w$]*)=(?:`CODEX_WINDOWS_REGISTERED_CORE`|"CODEX_WINDOWS_REGISTERED_CORE");([A-Za-z_$][\w$]*)=\[\.\.\.new Set\(\[\.\.\.([A-Za-z_$][\w$]*),\1\]\)\];/g;
+const patched = /let ([A-Za-z_$][\w$]*)=(?:`CODEX_WINDOWS_REGISTERED_CORE`|"CODEX_WINDOWS_REGISTERED_CORE");([A-Za-z_$][\w$]*)=\[\.\.\.new Set\(\[\.\.\.([A-Za-z_$][\w$]*),\1,\.\.\.(\[[^\]]+\])\.filter\(e=>process\.env\[e\]\)\]\)\];\/\*CODEX_NODE_REPL_PROXY_ENV_V1\*\//g;
 
 function patchSource(source) {
   const before = [...source.matchAll(original)];
