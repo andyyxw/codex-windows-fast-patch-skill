@@ -1085,6 +1085,18 @@ For this build the plugin browser service source is `0e1188675552812f68a2e487f64
 
 Desktop `26.1029.7803.0` drops both side-panel hint strings (`Chrome native host did not provide a browser-client path`, `browser-client path discovery or switch to another browser`) from `app.asar`, although `browserClientPath`, `browserServicePath`, and `codex-host-chunked-message-v1` are unchanged and the packaged client hash is still absent, which is normal for an unpatched Store package. The trust check now also accepts the injected loader snippet (`setupBrowserRuntime`), which both `26.1027` and `26.1029` carry as the actual consumer of a native-host-provided client path, so it no longer depends on prompt wording. `deep-research` remains undiscoverable in the optional all-bundled assertion; the scoped `-StrictVerifyOnly` passes.
 
+Desktop `26.1029.7803.0` also rebuilds the webview as numeric rolldown chunks (`webview\assets\async\<id>.<hash>.js`) and removes every named chunk the patcher matched by filename. `Find-PatchTargets` still resolves `DesktopFeatureSender/Main`, `ComputerUseInstallFlow/Setup`, `NodeReplTrustedPaths`, and `BundledMarketplaceCopy`; the Model Experience targets need content discovery through `Invoke-RgList`:
+
+| Target | 26.1029 shape | Patch |
+|---|---|---|
+| Fast request | `24191.*.js`, `async function p(e,t){...if("chatgpt"!==n&&...)}` with `(0,x.y)` module calls and double-quoted literals | Remove the auth-method guard (`speedAccessV2OriginalRe`) |
+| Fast UI | `216127.*.js`, `x?.authMethod==="chatgpt"\|\|x?.authMethod==="personalAccessToken"\|\|x?.authMethod==="amazonBedrock"` | Replace the triple with `/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0` |
+| Custom models | `24191.*.js`, single-object filter `function({additionalAvailableModels:...}){...return("apikey"!==...` | Prepend `/*CODEX_CUSTOM_MODELS_V1*/[...].includes(model.model)\|\|` after `return` |
+| Power slider | `104066.*.js`, no `harborEnabled:`; `canRenderPowerPickerSurface` is derived from model readiness | `already-patched` (nothing to force) |
+| Ultra | no `teamCatalog:` query head; local `enabled-reasoning-efforts` defaults include `ultra` | `not-applicable` |
+
+The Ultra discovery filter now requires `teamCatalog:` so the removed native query head is not mistaken for a target. Browser feature-hook, browser sidebar, Goal slash-command, and Computer Use availability targets are not ported for this build; a full non-targeted repatch still fails closed on them, and `-OnlyModelExperience` is the supported path.
+
 ## Windows Screenshot Shows an Occluding App
 
 On Desktop `26.1013.4894.1` with `@oai/cua 0.2.6` and Sky `0.7.8`, a real QQ main window had a process-backed app identifier and a usable accessibility tree, but a separate `getScreenshot()` call displayed an overlapping Codex window with part of QQ still visible underneath. No coordinate input was sent using that wrong image. This reproduced the symptom outside a game and without the reported Codex app-identifier mismatch; missing game AX or incorrect app attribution alone therefore does not explain every occurrence.

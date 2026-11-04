@@ -720,9 +720,11 @@ function Find-UltraSliderTarget {
   }
   $nativeCandidates = @((Invoke-RgList $RgPath '1186680773' $AssetsDir) | Where-Object {
     $nativeText = Get-Content -Raw -LiteralPath $_
+    # The query head is the only supported native target; 26.1029 removed it.
     $nativeText.Contains('includeUltraReasoningEffort:') -and
       $nativeText.Contains('isCustomModelProvider:') -and
-      $nativeText.Contains('hasModelSupportingUltraReasoningEffort:')
+      $nativeText.Contains('hasModelSupportingUltraReasoningEffort:') -and
+      $nativeText.Contains('teamCatalog:')
   })
   if ($nativeCandidates.Count -gt 1) { Fail 'ambiguous native Ultra reasoning targets' }
   if ($nativeCandidates.Count -eq 1) { return $nativeCandidates[0] }
@@ -764,6 +766,9 @@ const currentManagerCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(
 // Desktop 26.1007 delegates both speed modes to the shared requirements converter.
 const speedAccessOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`&&\4!==`personalAccessToken`(?:&&\4!==`amazonBedrock`)?\)return null;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
 const speedAccessPatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
+// Desktop 26.1029 rewrote the same helper with double-quoted literals and (0,x.y) module calls.
+const speedAccessV2OriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3\);if\("chatgpt"!==\4&&"personalAccessToken"!==\4&&"amazonBedrock"!==\4\)return null;let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3,\{priority:"critical"\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*),\{authMethod:\4,hostId:\3\},\7\),\(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\7\)\}/g;
+const speedAccessV2PatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3,\{priority:"critical"\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*),\{authMethod:\4,hostId:\3\},\7\),\(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\7\)\}/g;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
 
 const speedOriginal = [...text.matchAll(speedAccessOriginalRe)];
@@ -780,6 +785,28 @@ if (speedOriginal.length === 1) {
   process.exit(0);
 }
 if (speedPatched.length === 1) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+const speedV2Original = [...text.matchAll(speedAccessV2OriginalRe)];
+const speedV2Patched = [...text.matchAll(speedAccessV2PatchedRe)];
+if (speedV2Original.length + speedV2Patched.length > 1) {
+  process.stderr.write('fast-mode-speed-access-target-ambiguous\n');
+  process.exit(2);
+}
+if (speedV2Original.length === 1) {
+  const source = speedV2Original[0][0];
+  const authVar = speedV2Original[0][4];
+  const guard = `if("chatgpt"!==${authVar}&&"personalAccessToken"!==${authVar}&&"amazonBedrock"!==${authVar})return null;`;
+  if (!source.includes(guard)) {
+    process.stderr.write('fast-mode-speed-access-guard-not-found\n');
+    process.exit(2);
+  }
+  fs.writeFileSync(file, text.replace(source, source.replace(guard, '')));
+  process.stdout.write('patched');
+  process.exit(0);
+}
+if (speedV2Patched.length === 1) {
   process.stdout.write('already-patched');
   process.exit(0);
 }
@@ -852,6 +879,22 @@ const file = process.argv[2];
 const text = fs.readFileSync(file, 'utf8');
 
 const speedUiPrefix = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=\(0,[A-Za-z_$][\w$]*\.c\)\(10\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=\2\?\.hostId\?\?\4,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\5\),([A-Za-z_$][\w$]*)=/g;
+// Desktop 26.1029 keeps the same gate in a double-quoted triple.
+const modernAccessTripleRe = /([A-Za-z_$][\w$]*)\?\.authMethod==="chatgpt"\|\|\1\?\.authMethod==="personalAccessToken"\|\|\1\?\.authMethod==="amazonBedrock"/g;
+const modernAccessTriples = [...text.matchAll(modernAccessTripleRe)];
+if (modernAccessTriples.length > 1) {
+  process.stderr.write('fast-ui-speed-access-target-ambiguous\n');
+  process.exit(2);
+}
+if (modernAccessTriples.length === 1) {
+  fs.writeFileSync(file, text.replace(modernAccessTripleRe, '/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0'));
+  process.stdout.write('patched');
+  process.exit(0);
+}
+if (text.includes('/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0') && text.includes('serviceTierAccess:')) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
 const speedUiCandidates = [];
 for (const match of text.matchAll(speedUiPrefix)) {
   const [, fn, param, memo, root, host, auth, allowed] = match;
@@ -951,6 +994,29 @@ if (text.includes(marker)) {
   process.exit(0);
 }
 
+const forced = JSON.stringify(models);
+// Desktop 26.1029 splits the filter into a single-object function whose return
+// starts with the API-key access-program guard.
+const modernFilterRe = /function\(\{additionalAvailableModels:[$A-Za-z_][$\w]*,apiKeyDaybreakSupported:[$A-Za-z_][$\w]*,authMethod:[$A-Za-z_][$\w]*,availableModels:[$A-Za-z_][$\w]*,hasConfiguredModelCatalog:[$A-Za-z_][$\w]*,isCustomModelProvider:[$A-Za-z_][$\w]*,model:([$A-Za-z_][$\w]*),useHiddenModels:[$A-Za-z_][$\w]*\}\)\{let [$A-Za-z_][$\w]*=\1\.availableAccessPrograms\?\.cyber;return\("apikey"!==/g;
+const modernFilters = [...text.matchAll(modernFilterRe)];
+if (modernFilters.length > 1) {
+  process.stderr.write('custom-model-visibility-target-ambiguous\n');
+  process.exit(2);
+}
+if (modernFilters.length === 1) {
+  const modernMatch = modernFilters[0];
+  const modernVar = modernMatch[1];
+  const insertAt = modernMatch.index + modernMatch[0].length;
+  const next = text.slice(0, insertAt) + `/*${marker}*/${forced}.includes(${modernVar}.model)||` + text.slice(insertAt);
+  if (!next.includes(marker) || !models.every(model => next.includes(model))) {
+    process.stderr.write('custom-model-patch-verification-failed\n');
+    process.exit(2);
+  }
+  fs.writeFileSync(file, next);
+  process.stdout.write('patched');
+  process.exit(0);
+}
+
 const visibilityPatterns = [
   {
     // Desktop 26.1002 adds API-key access-program checks. Keep the denial
@@ -996,7 +1062,6 @@ if (!match) {
   process.exit(2);
 }
 
-const forced = JSON.stringify(models);
 const modelVar = match[target.modelGroup];
 let replacement;
 if (target.isReturn) {
@@ -1027,7 +1092,7 @@ if (text.includes(marker)) {
   process.exit(0);
 }
 
-if (!text.includes('harborEnabled:') && (text.includes('composer.modelPicker.power') || /model-picker-power-slider-impl/i.test(file) || text.includes('ModelPickerPowerSliderImpl'))) {
+if (!text.includes('harborEnabled:') && (text.includes('composer.modelPicker.power') || /model-picker-power-slider-impl/i.test(file) || text.includes('ModelPickerPowerSliderImpl') || text.includes('canRenderPowerPickerSurface'))) {
   process.stdout.write('already-patched');
   process.exit(0);
 }
@@ -1231,7 +1296,7 @@ if (!text.includes('enable_i18n') && text.includes('locale_source')) {
   process.exit(0);
 }
 
-let next = text.replace(/(\w+=)\w+\?\.get\(`enable_i18n`,!1\)/, '$1!0');
+let next = text.replace(/(\w+=)\w+\?\.get\((["`])enable_i18n\2,!1\)/, '$1!0');
 if (next === text) {
   process.stderr.write('locale-i18n-patch-target-not-found\n');
   process.exit(2);
@@ -2161,6 +2226,14 @@ function Test-CustomModelVisibilityExpression {
   if ($Text.Contains('CODEX_CUSTOM_MODELS_V1')) {
     return $true
   }
+  # 26.1029 splits the visibility filter into a single-object function whose
+  # return starts with the API-key access-program guard.
+  if ($Text.Contains('additionalAvailableModels:') -and
+      $Text.Contains('useHiddenModels') -and
+      $Text.Contains('supportedReasoningEfforts') -and
+      $Text -match 'function\(\{additionalAvailableModels:[$A-Za-z_][$\w]*,apiKeyDaybreakSupported:[$A-Za-z_][$\w]*,authMethod:[$A-Za-z_][$\w]*,availableModels:[$A-Za-z_][$\w]*,hasConfiguredModelCatalog:[$A-Za-z_][$\w]*,isCustomModelProvider:[$A-Za-z_][$\w]*,model:[$A-Za-z_][$\w]*,useHiddenModels:[$A-Za-z_][$\w]*\}\)\{let [$A-Za-z_][$\w]*=[$A-Za-z_][$\w]*\.availableAccessPrograms\?\.cyber;return') {
+    return $true
+  }
 
   # Keep target discovery aligned with the embedded Node patcher's supported predicate shapes.
   $patterns = @(
@@ -2182,11 +2255,21 @@ function Test-CustomModelVisibilityExpression {
 function Test-FastModeRequestTargetText {
   param([string]$Text)
   if ($Text.Contains('featureRequirements?.fast_mode')) { return $true }
+  # 26.1029 keeps the same helper but only this file carries the log message.
+  if ($Text.Contains('Failed to read service tier for request')) { return $true }
   return $Text -match 'async function ([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*),([$A-Za-z_][$\w]*)\)\{let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3\);(?:if\(\4!==`chatgpt`&&\4!==`personalAccessToken`(?:&&\4!==`amazonBedrock`)?\)return null;)?let ([$A-Za-z_][$\w]*)=await ([$A-Za-z_][$\w]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([$A-Za-z_][$\w]*),\{authMethod:\4,hostId:\3\},\6\),([$A-Za-z_][$\w]*)\(\6\)\}'
 }
 
 function Test-ServiceTierAccessUiTargetText {
   param([string]$Text)
+  if (-not $Text.Contains('serviceTierAccess:')) { return $false }
+  if ($Text -match '([$A-Za-z_][$\w]*)\?\.authMethod==="chatgpt"\|\|\1\?\.authMethod==="personalAccessToken"\|\|\1\?\.authMethod==="amazonBedrock"') {
+    return $true
+  }
+  if ($Text.Contains('/*CODEX_SERVICE_TIER_ACCESS_UI_V1*/!0') -and
+      $Text -match '\{serviceTierAccess:[$A-Za-z_][$\w]*,isLoading:[$A-Za-z_][$\w]*\}') {
+    return $true
+  }
   return $Text.Contains('serviceTierAccess:') -and
     $Text -match '\?\.authMethod===`chatgpt`\|\|[$A-Za-z_][$\w]*\?\.authMethod===`personalAccessToken`|/\*CODEX_SERVICE_TIER_ACCESS_UI_V1\*/!0' -and
     $Text -match 'let\{data:([$A-Za-z_][$\w]*),isPending:([$A-Za-z_][$\w]*)\}=[$A-Za-z_][$\w]*\([$A-Za-z_][$\w]*,[$A-Za-z_][$\w]*\),([$A-Za-z_][$\w]*)=!![$A-Za-z_][$\w]*\?\.isLoading\|\|[$A-Za-z_][$\w]*&&\2,[$A-Za-z_][$\w]*;'
@@ -2243,6 +2326,15 @@ function Find-PatchTargets {
       }
     }
   }
+  if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'serviceTierAccess:' $assetsDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if (Test-ServiceTierAccessUiTargetText $text) {
+        $fastModeUiTarget = $candidate
+        break
+      }
+    }
+  }
   $customModelsTarget = $null
   foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'model-list-filter-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
     $text = Get-Content -Raw -LiteralPath $candidate
@@ -2259,6 +2351,15 @@ function Find-PatchTargets {
           $text.Contains('useHiddenModels') -and
           $text.Contains('supportedReasoningEfforts') -and
           (Test-CustomModelVisibilityExpression -Text $text)) {
+        $customModelsTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($customModelsTarget)) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'additionalAvailableModels:' $assetsDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if (Test-CustomModelVisibilityExpression -Text $text) {
         $customModelsTarget = $candidate
         break
       }
@@ -2292,6 +2393,15 @@ function Find-PatchTargets {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('ModelPickerPowerSliderImpl') -or
           ($text.Contains('composer.modelPicker.power') -and $text.Contains('PowerSlider') -and -not $text.Contains('harborEnabled:'))) {
+        $powerSliderTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'canRenderPowerPickerSurface' $assetsDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if (-not $text.Contains('harborEnabled:')) {
         $powerSliderTarget = $candidate
         break
       }
@@ -2821,6 +2931,15 @@ function Invoke-PatchAppAsar {
       }
     }
     if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
+      foreach ($candidate in (Invoke-RgList $rgPath 'serviceTierAccess:' $assetsDir)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if (Test-ServiceTierAccessUiTargetText $text) {
+          $fastModeUiTarget = $candidate
+          break
+        }
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
       Fail 'could not find Model Experience Fast Mode UI target'
     }
 
@@ -2840,6 +2959,15 @@ function Invoke-PatchAppAsar {
             $text.Contains('useHiddenModels') -and
             $text.Contains('supportedReasoningEfforts') -and
             (Test-CustomModelVisibilityExpression -Text $text)) {
+          $customModelsTarget = $candidate
+          break
+        }
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($customModelsTarget)) {
+      foreach ($candidate in (Invoke-RgList $rgPath 'additionalAvailableModels:' $assetsDir)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if (Test-CustomModelVisibilityExpression -Text $text) {
           $customModelsTarget = $candidate
           break
         }
@@ -2873,6 +3001,15 @@ function Invoke-PatchAppAsar {
         $text = Get-Content -Raw -LiteralPath $candidate
         if ($text.Contains('ModelPickerPowerSliderImpl') -or
           ($text.Contains('composer.modelPicker.power') -and $text.Contains('PowerSlider') -and -not $text.Contains('harborEnabled:'))) {
+          $powerSliderTarget = $candidate
+          break
+        }
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+      foreach ($candidate in (Invoke-RgList $rgPath 'canRenderPowerPickerSurface' $assetsDir)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if (-not $text.Contains('harborEnabled:')) {
           $powerSliderTarget = $candidate
           break
         }
