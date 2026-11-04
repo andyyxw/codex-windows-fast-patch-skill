@@ -3277,8 +3277,10 @@ function Get-ChromeBrowserClientTrustMode {
       throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=$marker"
     }
   }
+  # 26.1029 removed the old side-panel prompt wording; the injected loader snippet remains the true consumer.
   $browserClientHintPresent = (Test-FileContainsAsciiText $AppAsarPath 'Chrome native host did not provide a browser-client path') -or
-                              (Test-FileContainsAsciiText $AppAsarPath 'browser-client path discovery or switch to another browser')
+                              (Test-FileContainsAsciiText $AppAsarPath 'browser-client path discovery or switch to another browser') -or
+                              (Test-FileContainsAsciiText $AppAsarPath 'setupBrowserRuntime')
   if (-not $browserClientHintPresent) {
     throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=browser-client path hint"
   }
