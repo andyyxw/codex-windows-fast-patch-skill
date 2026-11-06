@@ -2434,7 +2434,7 @@ function Find-PatchTargets {
     }
   }
   $browserUseFeatureHookTarget = $null
-  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:[`"]browser_use_external[`"]' $assetsDir)) {
+  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:[`\x22]browser_use_external[`\x22]' $assetsDir)) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text -match 'featureName:[`"]browser_use_external[`"]' -and
         $text -match 'featureName:[`"]browser_use[`"]' -and
@@ -2640,7 +2640,7 @@ function Find-PatchTargets {
 
   $computerUseAvailabilityTarget = $null
   $computerUseInstallFlowTarget = $null
-  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:[`"]computer_use[`"]' $assetsDir)) {
+  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:[`\x22]computer_use[`\x22]' $assetsDir)) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ([string]::IsNullOrWhiteSpace($computerUseAvailabilityTarget) -and
         $text.Contains('available:') -and
@@ -3058,22 +3058,34 @@ function Invoke-PatchAppAsar {
       Fail 'could not find Model Experience compact Power slider harbor gate'
     }
     $ultraSliderTarget = Find-UltraSliderTarget $rgPath $assetsDir
+    $fastModeTargets = @($fastModeTarget)
+    foreach ($candidate in (Invoke-RgList $rgPath 'if\(\x22chatgpt\x22!==\w+&&\x22personalAccessToken\x22!==\w+&&\x22amazonBedrock\x22!==\w+\)return null;let \w+=await \(0,' $assetsDir)) {
+      if ($fastModeTargets -notcontains $candidate) { $fastModeTargets += $candidate }
+    }
+    $fastModeUiTargets = @($fastModeUiTarget)
+    foreach ($candidate in (Invoke-RgList $rgPath '[A-Za-z_$][\w$]*\?\.authMethod===\x22chatgpt\x22\|\|[A-Za-z_$][\w$]*\?\.authMethod===\x22personalAccessToken\x22\|\|[A-Za-z_$][\w$]*\?\.authMethod===\x22amazonBedrock\x22' $assetsDir)) {
+      if ($fastModeUiTargets -notcontains $candidate) { $fastModeUiTargets += $candidate }
+    }
     Write-Log "Model Experience Fast Mode request target: $fastModeTarget"
+    Write-Log "Model Experience Fast Mode request copies: $($fastModeTargets.Count)"
     Write-Log "Model Experience Fast Mode UI target: $fastModeUiTarget"
+    Write-Log "Model Experience Fast Mode UI copies: $($fastModeUiTargets.Count)"
     Write-Log "Model Experience custom models target: $customModelsTarget"
     Write-Log "Model Experience Power slider target: $powerSliderTarget"
     Write-Log "Model Experience Ultra slider local-fallback target: $ultraSliderTarget"
-    $fastModeResult = Invoke-NodePatcher $nodePath $patchers.Fast @($fastModeTarget)
-    Write-Log "Model Experience Fast Mode request result: $fastModeResult"
-    $fastModeUiResult = Invoke-NodePatcher $nodePath $patchers.FastUi @($fastModeUiTarget)
-    Write-Log "Model Experience Fast Mode UI result: $fastModeUiResult"
+    $fastModeResults = @($fastModeTargets | ForEach-Object { Invoke-NodePatcher $nodePath $patchers.Fast @($_) })
+    $fastModeResult = if ($fastModeResults -contains 'patched') { 'patched' } elseif ($fastModeResults -contains 'already-patched') { 'already-patched' } else { $fastModeResults | Select-Object -First 1 }
+    Write-Log "Model Experience Fast Mode request result: $($fastModeResults -join ', ')"
+    $fastModeUiResults = @($fastModeUiTargets | ForEach-Object { Invoke-NodePatcher $nodePath $patchers.FastUi @($_) })
+    $fastModeUiResult = if ($fastModeUiResults -contains 'patched') { 'patched' } elseif ($fastModeUiResults -contains 'already-patched') { 'already-patched' } else { $fastModeUiResults | Select-Object -First 1 }
+    Write-Log "Model Experience Fast Mode UI result: $($fastModeUiResults -join ', ')"
     $customModelsResult = Invoke-NodePatcher $nodePath $patchers.CustomModels (@($customModelsTarget) + @($CustomModels))
     Write-Log "Model Experience custom models result: $customModelsResult ($($CustomModels -join ', '))"
     $powerSliderResult = Invoke-NodePatcher $nodePath $patchers.PowerSlider @($powerSliderTarget)
     Write-Log "Model Experience Power slider result: $powerSliderResult"
     $ultraSliderResult = Invoke-NodePatcher $nodePath $patchers.UltraSlider @($(if ([string]::IsNullOrWhiteSpace($ultraSliderTarget)) { '__none__' } else { $ultraSliderTarget }))
     Write-Log "Model Experience Ultra slider local-fallback result: $ultraSliderResult"
-    foreach ($syntaxTarget in @($fastModeTarget, $fastModeUiTarget, $customModelsTarget, $powerSliderTarget, $ultraSliderTarget) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique) {
+    foreach ($syntaxTarget in @($fastModeTargets + $fastModeUiTargets + @($customModelsTarget, $powerSliderTarget, $ultraSliderTarget)) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique) {
       & $nodePath --check $syntaxTarget
       if ($LASTEXITCODE -ne 0) {
         Fail "Model Experience patched asset failed node --check: $syntaxTarget"
