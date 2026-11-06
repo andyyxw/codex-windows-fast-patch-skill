@@ -776,8 +776,9 @@ const currentManagerCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(
 const speedAccessOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`&&\4!==`personalAccessToken`(?:&&\4!==`amazonBedrock`)?\)return null;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
 const speedAccessPatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),([A-Za-z_$][\w$]*)\(\6\)\}/g;
 // Desktop 26.1029 rewrote the same helper with double-quoted literals and (0,x.y) module calls.
-const speedAccessV2OriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3\);if\("chatgpt"!==\4&&"personalAccessToken"!==\4&&"amazonBedrock"!==\4\)return null;let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3,\{priority:"critical"\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*),\{authMethod:\4,hostId:\3\},\7\),\(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\7\)\}/g;
-const speedAccessV2PatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3,\{priority:"critical"\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*),\{authMethod:\4,hostId:\3\},\7\),\(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\7\)\}/g;
+// 26.1103 can emit it as an anonymous function expression, so the name is optional.
+const speedAccessV2OriginalRe = /async function ?(?:([A-Za-z_$][\w$]*))?\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3\);if\("chatgpt"!==\4&&"personalAccessToken"!==\4&&"amazonBedrock"!==\4\)return null;let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3,\{priority:"critical"\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*),\{authMethod:\4,hostId:\3\},\7\),\(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\7\)\}/g;
+const speedAccessV2PatchedRe = /async function ?(?:([A-Za-z_$][\w$]*))?\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await \(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\2,\3,\{priority:"critical"\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*),\{authMethod:\4,hostId:\3\},\7\),\(0,([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\)\(\7\)\}/g;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
 
 const speedOriginal = [...text.matchAll(speedAccessOriginalRe)];
@@ -2433,11 +2434,11 @@ function Find-PatchTargets {
     }
   }
   $browserUseFeatureHookTarget = $null
-  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:`browser_use_external`' $assetsDir)) {
+  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:[`"]browser_use_external[`"]' $assetsDir)) {
     $text = Get-Content -Raw -LiteralPath $candidate
-    if ($text.Contains('featureName:`browser_use_external`') -and
-        $text.Contains('featureName:`browser_use`') -and
-        $text.Contains('featureName:`computer_use`')) {
+    if ($text -match 'featureName:[`"]browser_use_external[`"]' -and
+        $text -match 'featureName:[`"]browser_use[`"]' -and
+        $text -match 'featureName:[`"]computer_use[`"]') {
       $browserUseFeatureHookTarget = $candidate
       break
     }
@@ -2459,9 +2460,9 @@ function Find-PatchTargets {
            ($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\)=>!0\)') -or
            ($text.Contains('CODEX_BROWSER_IN_APP_GATES_V2')) -or
            ($text.Contains('browser.in-app') -and
-            $text.Contains('featureName:`browser_use`') -and
+            $text -match 'featureName:[`"]browser_use[`"]' -and
             $text.Contains('410262010') -and
-            $text -match '[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\.isCapable,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\(`410262010`\)'))) {
+            $text -match '(?:[A-Za-z_$][\w$]*=\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)|[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\.isCapable,[A-Za-z_$][\w$]*=(?:\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)|[A-Za-z_$][\w$]*)\([`"]410262010[`"]\)'))) {
         $browserSidebarAvailabilityTarget = $candidate
         break
       }
@@ -2491,7 +2492,7 @@ function Find-PatchTargets {
     foreach ($candidate in $desktopFeatureMainCandidates) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') -and
-          (($text -match '([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`win32`&&([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0,computerUseNodeRepl:!0\}:\4') -or
+          (($text -match '([A-Za-z_$][\w$]*)=[`"]win32[`"]===([A-Za-z_$][\w$]*)&&[`"]1[`"]===([A-Za-z_$][\w$]*)\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE\?\{\.\.\.([A-Za-z_$][\w$]*),computerUse:!0(?:,computerUseNodeRepl:!0)?\}:\4') -or
            ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,(?:dotBrowserUse:[^,}]+,)?(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[A-Za-z_$][\w$]*\.browserPane,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
            $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0') -or
            ($text -match 'inAppBrowserUse:!0,(?:dotBrowserUse:[^,}]+,)?(?:mcpAppsBrowserUse:[^,}]+,)?inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'))) {
@@ -2639,7 +2640,7 @@ function Find-PatchTargets {
 
   $computerUseAvailabilityTarget = $null
   $computerUseInstallFlowTarget = $null
-  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:`computer_use`' $assetsDir)) {
+  foreach ($candidate in (Invoke-RgList $RgPath 'featureName:[`"]computer_use[`"]' $assetsDir)) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ([string]::IsNullOrWhiteSpace($computerUseAvailabilityTarget) -and
         $text.Contains('available:') -and
